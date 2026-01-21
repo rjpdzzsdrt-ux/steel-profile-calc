@@ -1,9 +1,14 @@
 (function () {
   function safeJSON(str, fallback) { try { return JSON.parse(str); } catch (e) { return fallback; } }
   function esc(v) {
-    return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(v ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-  function valOrNull(v) { if (v === '' || v == null) return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+  function valOrNull(v) {
+    if (v === '' || v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
 
   function getPatternTextarea() {
     return document.getElementById('spb-pattern-textarea') || document.querySelector('textarea[name="spb_pattern_json"]');
