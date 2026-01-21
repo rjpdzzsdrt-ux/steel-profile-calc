@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Steel Profile Builder
  * Plugin URI: https://steel.ee
- * Description: Administ muudetav plekiprofiilide süsteem (mõõdud + pattern + materjalide €/m² hinnad) alusmoodul. Frontend kalkulaator lisandub järgmistes sammudes.
- * Version: 0.1.0
+ * Description: Administ muudetav plekiprofiilide süsteem (mõõdud + pattern + materjalide €/m² hinnad) + frontend kalkulaatori põhi (hind ilma KM ja KM-ga).
+ * Version: 0.2.0
  * Author: Steel.ee
  */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) exit;
 
 class Steel_Profile_Builder {
   const CPT = 'spb_profile';
-  const VER = '0.1.0';
+  const VER = '0.2.0';
 
   public function __construct() {
     add_action('init', [$this, 'register_cpt']);
@@ -19,6 +19,9 @@ class Steel_Profile_Builder {
     add_action('save_post', [$this, 'save_meta'], 10, 2);
 
     add_action('admin_enqueue_scripts', [$this, 'enqueue_admin']);
+
+    // Frontend shortcode Elementorisse
+    add_shortcode('steel_profile_builder', [$this, 'shortcode']);
   }
 
   public function register_cpt() {
@@ -234,6 +237,233 @@ class Steel_Profile_Builder {
       'vat' => $vat,
       'materials' => $materials_out,
     ]);
+  }
+
+  public function shortcode($atts) {
+    $atts = shortcode_atts(['id' => 0], $atts);
+    $id = intval($atts['id']);
+    if (!$id) return '<div>Steel Profile Builder: puudub id</div>';
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== self::CPT) {
+      return '<div>Steel Profile Builder: vale id</div>';
+    }
+
+    $m = $this->get_meta($id);
+
+    $dims = is_array($m['dims']) && $m['dims'] ? $m['dims'] : $this->default_dims();
+    $pricing = is_array($m['pricing']) && $m['pricing'] ? $m['pricing'] : $this->default_pricing();
+
+    $vat = isset($pricing['vat']) ? floatval($pricing['vat']) : 24;
+    $materials = is_array($pricing['materials']) ? $pricing['materials'] : $this->default_pricing()['materials'];
+
+    // Frontend config
+    $cfg = [
+      'profileId' => $id,
+      'profileName' => get_the_title($id),
+      'dims' => $dims,
+      'vat' => $vat,
+      'materials' => $materials,
+    ];
+
+    $uid = 'spb_front_' . $id . '_' . wp_generate_uuid4();
+
+    ob_start(); ?>
+      <div class="spb-front" id="<?php echo esc_attr($uid); ?>" data-spb="<?php echo esc_attr(wp_json_encode($cfg)); ?>">
+        <div class="spb-card">
+          <div class="spb-head">
+            <div class="spb-title"><?php echo esc_html(get_the_title($id)); ?></div>
+            <div class="spb-sub">Arvutus: A(m²) = (Σ s_mm / 1000) × (pikkus_mm / 1000). Hind = A × €/m² × kogus.</div>
+          </div>
+
+          <div class="spb-grid">
+            <div class="spb-section">
+              <div class="spb-section-title">Mõõdud</div>
+              <div class="spb-inputs"></div>
+            </div>
+
+            <div class="spb-section">
+              <div class="spb-section-title">Tellimus</div>
+
+              <div class="spb-row">
+                <label>Materjal</label>
+                <select class="spb-material"></select>
+              </div>
+
+              <div class="spb-row">
+                <label>Detaili pikkus (mm)</label>
+                <input type="number" class="spb-length" min="50" max="8000" value="2000">
+              </div>
+
+              <div class="spb-row">
+                <label>Kogus</label>
+                <input type="number" class="spb-qty" min="1" max="999" value="1">
+              </div>
+
+              <div class="spb-results">
+                <div class="spb-line">
+                  <span>Pindala (m²)</span>
+                  <strong class="spb-area">—</strong>
+                </div>
+                <div class="spb-line">
+                  <span>Hind ilma KM</span>
+                  <strong class="spb-price-novat">—</strong>
+                </div>
+                <div class="spb-line">
+                  <span>Hind koos KM (<?php echo esc_html($vat); ?>%)</span>
+                  <strong class="spb-price-vat">—</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style>
+        .spb-front .spb-card{border:1px solid #e5e5e5;border-radius:14px;padding:16px;background:#fff}
+        .spb-front .spb-head{margin-bottom:14px}
+        .spb-front .spb-title{font-size:20px;font-weight:800;line-height:1.15}
+        .spb-front .spb-sub{font-size:13px;opacity:.75;margin-top:6px}
+        .spb-front .spb-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:18px;align-items:start}
+        .spb-front .spb-section{border:1px solid #eee;border-radius:12px;padding:14px}
+        .spb-front .spb-section-title{font-weight:700;margin-bottom:10px}
+        .spb-front .spb-inputs{display:grid;grid-template-columns:1fr 160px;gap:10px;align-items:center}
+        .spb-front .spb-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;margin-bottom:10px}
+        .spb-front label{font-size:14px;opacity:.9}
+        .spb-front input,.spb-front select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:10px}
+        .spb-front .spb-note{grid-column:1/-1;font-size:12px;opacity:.65;margin-top:-6px;margin-bottom:6px}
+        .spb-front .spb-results{margin-top:12px;border-top:1px solid #eee;padding-top:12px}
+        .spb-front .spb-line{display:flex;justify-content:space-between;gap:12px;margin:6px 0}
+        .spb-front .spb-line strong{font-size:16px}
+        @media (max-width: 900px){.spb-front .spb-grid{grid-template-columns:1fr}}
+      </style>
+
+      <script>
+        (function(){
+          const root = document.getElementById('<?php echo esc_js($uid); ?>');
+          if (!root) return;
+
+          const cfg = JSON.parse(root.dataset.spb || '{}');
+
+          const inputsWrap = root.querySelector('.spb-inputs');
+          const matSel = root.querySelector('.spb-material');
+          const lenEl = root.querySelector('.spb-length');
+          const qtyEl = root.querySelector('.spb-qty');
+
+          const areaEl = root.querySelector('.spb-area');
+          const novatEl = root.querySelector('.spb-price-novat');
+          const vatEl = root.querySelector('.spb-price-vat');
+
+          const state = {};
+
+          function toNum(v, fallback){
+            const n = Number(v);
+            return Number.isFinite(n) ? n : fallback;
+          }
+          function clamp(n, min, max){
+            n = toNum(n, min);
+            return Math.max(min, Math.min(max, n));
+          }
+
+          // Build dimension inputs from cfg.dims
+          function renderDimInputs(){
+            inputsWrap.innerHTML = '';
+            (cfg.dims || []).forEach(d => {
+              const min = (d.min ?? (d.type === 'angle' ? 45 : 10));
+              const max = (d.max ?? (d.type === 'angle' ? 215 : 500));
+              const def = (d.def ?? min);
+
+              state[d.key] = toNum(state[d.key], def);
+
+              const lab = document.createElement('label');
+              lab.textContent = (d.label || d.key) + (d.type === 'angle' ? ' (°)' : ' (mm)');
+
+              const inp = document.createElement('input');
+              inp.type = 'number';
+              inp.value = state[d.key];
+              inp.min = min;
+              inp.max = max;
+              inp.dataset.key = d.key;
+              inp.dataset.type = d.type;
+
+              inputsWrap.appendChild(lab);
+              inputsWrap.appendChild(inp);
+
+              if (d.type === 'angle') {
+                const note = document.createElement('div');
+                note.className = 'spb-note';
+                note.textContent = 'Nurk (sisemine) – hinnas ei kasutata. Suund: ' + ((d.dir === 'R') ? 'R' : 'L');
+                inputsWrap.appendChild(note);
+                // fill grid: note spans two columns in css; keep DOM simple
+              }
+            });
+          }
+
+          function renderMaterials(){
+            matSel.innerHTML = '';
+            (cfg.materials || []).forEach(m => {
+              const opt = document.createElement('option');
+              opt.value = m.key;
+              opt.textContent = (m.label || m.key) + ' — ' + toNum(m.eur_m2, 0).toFixed(2) + ' €/m²';
+              opt.dataset.eur = toNum(m.eur_m2, 0);
+              matSel.appendChild(opt);
+            });
+
+            // default first material
+            if (matSel.options.length) matSel.selectedIndex = 0;
+          }
+
+          function currentMaterialEurM2(){
+            const opt = matSel.options[matSel.selectedIndex];
+            return opt ? toNum(opt.dataset.eur, 0) : 0;
+          }
+
+          function calc(){
+            // Sum ONLY length dims (s*)
+            let sumSmm = 0;
+            (cfg.dims || []).forEach(d => {
+              if (d.type !== 'length') return;
+              const min = (d.min ?? 10);
+              const max = (d.max ?? 500);
+              const v = clamp(state[d.key], min, max);
+              sumSmm += v;
+            });
+
+            const Lm = sumSmm / 1000.0;
+            const Pm = clamp(lenEl.value, 50, 8000) / 1000.0;
+            const qty = clamp(qtyEl.value, 1, 999);
+
+            const area = Lm * Pm;
+            const eurM2 = currentMaterialEurM2();
+            const priceNoVat = area * eurM2 * qty;
+
+            const vatPct = toNum(cfg.vat, 24);
+            const priceVat = priceNoVat * (1 + vatPct/100);
+
+            areaEl.textContent = area.toFixed(3) + ' m²';
+            novatEl.textContent = priceNoVat.toFixed(2) + ' €';
+            vatEl.textContent = priceVat.toFixed(2) + ' €';
+          }
+
+          inputsWrap.addEventListener('input', (e) => {
+            const el = e.target;
+            if (!el || !el.dataset || !el.dataset.key) return;
+            const k = el.dataset.key;
+            state[k] = toNum(el.value, 0);
+            calc();
+          });
+
+          matSel.addEventListener('change', calc);
+          lenEl.addEventListener('input', calc);
+          qtyEl.addEventListener('input', calc);
+
+          renderDimInputs();
+          renderMaterials();
+          calc();
+        })();
+      </script>
+    <?php
+    return ob_get_clean();
   }
 }
 
