@@ -2,15 +2,24 @@
 /**
  * Plugin Name: Steel Profile Builder
  * Description: Profiilikalkulaator (SVG joonis + mõõtjooned + nurkade suund/poolsus) + administ muudetavad mõõdud + hinnastus + WPForms.
- * Version: 0.4.3
+ * Version: 0.4.4
  * Author: Steel.ee
  */
 
 if (!defined('ABSPATH')) exit;
 
+// DOMPDF autoload (Variant A: vendor on kaasas)
+$spb_autoload = __DIR__ . '/vendor/autoload.php';
+if (file_exists($spb_autoload)) {
+  require_once $spb_autoload;
+}
+
+// PDF generator helper
+require_once __DIR__ . '/pdf-generator.php';
+
 class Steel_Profile_Builder {
   const CPT = 'spb_profile';
-  const VER = '0.4.3';
+  const VER = '0.4.4';
 
   public function __construct() {
     add_action('init', [$this, 'register_cpt']);
@@ -18,6 +27,9 @@ class Steel_Profile_Builder {
     add_action('save_post', [$this, 'save_meta'], 10, 2);
     add_action('admin_enqueue_scripts', [$this, 'enqueue_admin']);
     add_shortcode('steel_profile_builder', [$this, 'shortcode']);
+
+    // ✅ Generate PDF + send email after WPForms submit
+    add_action('wpforms_process_complete', [$this, 'wpforms_after_submit_generate_pdf'], 10, 4);
   }
 
   public function register_cpt() {
@@ -96,6 +108,7 @@ class Steel_Profile_Builder {
     return [
       'form_id' => 0,
       'map' => [
+        'profile_id' => 0,              // ✅ uus (soovitatav)
         'profile_name' => 0,
         'dims_json' => 0,
         'material' => 0,
@@ -148,7 +161,6 @@ class Steel_Profile_Builder {
         if (!root) return;
         const cfg0 = JSON.parse(root.dataset.spb || '{}');
 
-        const svg = root.querySelector('svg');
         const segs = root.querySelector('.spb-segs');
         const dimLayer = root.querySelector('.spb-dimlayer');
         const ARROW_ID = '<?php echo esc_js($arrowId); ?>';
@@ -238,7 +250,7 @@ class Steel_Profile_Builder {
           let x = 140, y = 360;
           let heading = -90;
           const pts = [[x,y]];
-          const segStyle = []; // length-segment style: 'main' | 'return'
+          const segStyle = [];
 
           const segKeys = pattern.filter(k => dimMap[k] && dimMap[k].type === 'length');
           const totalMm = segKeys.reduce((sum,k)=> sum + Number(state[k] || 0), 0);
@@ -265,7 +277,7 @@ class Steel_Profile_Builder {
               const turn = turnFromAngle(state[key], pol);
               heading += dir * turn;
 
-              if (meta.ret) pendingReturn = true; // järgmine sirglõik = tagasipööre
+              if (meta.ret) pendingReturn = true;
             }
           }
 
@@ -494,6 +506,7 @@ class Steel_Profile_Builder {
     $map = is_array($wp['map'] ?? null) ? $wp['map'] : $this->default_wpforms()['map'];
 
     $fields = [
+      'profile_id' => 'Profiili ID (soovitatav PDF jaoks)', // ✅ uus
       'profile_name' => 'Profiili nimi',
       'dims_json' => 'Mõõdud JSON',
       'material' => 'Materjal',
@@ -544,7 +557,7 @@ class Steel_Profile_Builder {
       $type = (($d['type'] ?? '') === 'angle') ? 'angle' : 'length';
       $dir  = (strtoupper($d['dir'] ?? 'L') === 'R') ? 'R' : 'L';
       $pol  = (($d['pol'] ?? '') === 'outer') ? 'outer' : 'inner';
-      $ret  = !empty($d['ret']); // ✅ tagasipööre
+      $ret  = !empty($d['ret']);
 
       $dims_out[] = [
         'key' => $key,
@@ -600,6 +613,126 @@ class Steel_Profile_Builder {
       }
     }
     update_post_meta($post_id, '_spb_wpforms', $wp);
+  }
+
+  /* ===========================
+   *  WPForms -> generate PDF + email
+   * =========================== */
+  public function wpforms_after_submit_generate_pdf($fields, $entry, $form_data, $entry_id) {
+    // Only handle if the submitted form matches a profile mapping
+    $form_id = intval($form_data['id'] ?? 0);
+    if (!$form_id) return;
+
+    // Find profile that uses this form id (search CPT meta)
+    $q = new WP_Query([
+      'post_type' => self::CPT,
+      'posts_per_page' => 50,
+      'post_status' => 'any',
+      'meta_query' => [
+        [
+          'key' => '_spb_wpforms',
+          'compare' => 'EXISTS',
+        ]
+      ],
+      'fields' => 'ids',
+    ]);
+
+    $profile_id = 0;
+    $profile_cfg = null;
+
+    foreach ($q->posts as $pid) {
+      $wp = get_post_meta($pid, '_spb_wpforms', true);
+      if (!is_array($wp)) continue;
+      $fid = intval($wp['form_id'] ?? 0);
+      if ($fid !== $form_id) continue;
+
+      // We found a profile that uses this WPForms form
+      $profile_id = intval($pid);
+      $profile_cfg = $this->get_meta($pid);
+      break;
+    }
+
+    if (!$profile_id || !$profile_cfg) return;
+
+    $dims = (is_array($profile_cfg['dims']) && $profile_cfg['dims']) ? $profile_cfg['dims'] : $this->default_dims();
+    $pattern = (is_array($profile_cfg['pattern']) && $profile_cfg['pattern']) ? $profile_cfg['pattern'] : ["s1","a1","s2","a2","s3","a3","s4"];
+
+    // Extract dims_json payload from WPForms fields
+    $dims_payload = [];
+    $dims_payload_raw = '';
+
+    // Find a field that looks like JSON array containing keys
+    foreach ((array)$fields as $f) {
+      if (!is_array($f)) continue;
+      $val = $f['value'] ?? '';
+      if (!is_string($val) || strlen($val) < 3) continue;
+      if ($val[0] === '[' && strpos($val, '"key"') !== false) {
+        $dims_payload_raw = $val;
+        break;
+      }
+    }
+    if ($dims_payload_raw) {
+      $decoded = json_decode($dims_payload_raw, true);
+      if (is_array($decoded)) $dims_payload = $decoded;
+    }
+
+    // Build values map for server-side SVG
+    $values_map = [];
+    foreach ($dims_payload as $d) {
+      if (!is_array($d)) continue;
+      $k = $d['key'] ?? '';
+      if ($k === '') continue;
+      $values_map[$k] = floatval($d['value'] ?? 0);
+    }
+
+    $title = get_the_title($profile_id);
+    $customer_email = SPB_PDF_Generator::extract_customer_email_from_wpforms($fields);
+    $customer_name  = SPB_PDF_Generator::extract_customer_line($fields, ['name']);
+    $customer_phone = SPB_PDF_Generator::extract_customer_line($fields, ['phone']);
+
+    $meta_lines = [
+      'Kuupäev: ' . wp_date('Y-m-d H:i'),
+      'Päring ID: ' . $entry_id,
+    ];
+    if ($customer_name)  $meta_lines[] = 'Klient: ' . $customer_name;
+    if ($customer_phone) $meta_lines[] = 'Telefon: ' . $customer_phone;
+    if ($customer_email) $meta_lines[] = 'E-mail: ' . $customer_email;
+
+    $result = SPB_PDF_Generator::generate_pdf_file(
+      ['dims'=>$dims,'pattern'=>$pattern],
+      $values_map,
+      $dims_payload,
+      $title,
+      $meta_lines
+    );
+
+    if (is_wp_error($result)) {
+      // Optional: log
+      error_log('[SPB] PDF error: ' . $result->get_error_message());
+      return;
+    }
+
+    $pdf_path = $result['path'];
+    $pdf_url  = $result['url'];
+
+    $subject = 'Steel.ee tootmisjoonis (PDF): ' . $title . ' – #' . $entry_id;
+
+    $body_lines = [
+      'Tere!',
+      '',
+      'Manuses on tootmisjoonis (PDF).',
+      'Profiil: ' . $title,
+      'Päring ID: ' . $entry_id,
+      'Kuupäev: ' . wp_date('Y-m-d H:i'),
+      '',
+      'Allalaadimise link (kui manust ei tule läbi):',
+      $pdf_url,
+      '',
+      '— Steel.ee',
+    ];
+
+    // ✅ Send to admin + customer (if email found)
+    SPB_PDF_Generator::send_pdf_email($pdf_path, $subject, $body_lines, true, $customer_email);
   }
 
   /* ===========================
@@ -834,7 +967,7 @@ class Steel_Profile_Builder {
               (cfg.materials||[]).forEach(m=>{
                 const opt = document.createElement('option');
                 opt.value = m.key;
-                opt.textContent = (m.label || m.key); // ei näita €/m²
+                opt.textContent = (m.label || m.key);
                 opt.dataset.eur = toNum(m.eur_m2, 0);
                 matSel.appendChild(opt);
               });
@@ -849,8 +982,6 @@ class Steel_Profile_Builder {
               return opt ? opt.textContent : '';
             }
 
-            // ✅ Frontendis: klient muudab ainult väärtusi (mm / kraad)
-            // Dir / Seest-Väljast / Tagasipööre tulevad administ (cfg.dims)
             function renderDimInputs(){
               inputsWrap.innerHTML='';
               cfg.dims.forEach(d=>{
@@ -879,7 +1010,7 @@ class Steel_Profile_Builder {
               let x=140, y=360;
               let heading=-90;
               const pts=[[x,y]];
-              const segStyle=[]; // per length: 'main'|'return'
+              const segStyle=[];
               const pattern = Array.isArray(cfg.pattern) ? cfg.pattern : [];
 
               const segKeys = pattern.filter(k => dimMap[k] && dimMap[k].type==='length');
@@ -997,7 +1128,6 @@ class Steel_Profile_Builder {
             }
 
             function dimsPayloadJSON(){
-              // Saadame ka dir/pol/ret WPFormsile, aga klient neid muuta ei saa
               return JSON.stringify(cfg.dims.map(d=>{
                 const o = { key:d.key, type:d.type, label:(d.label||d.key), value:stateVal[d.key] };
                 if (d.type==='angle') {
@@ -1018,6 +1148,7 @@ class Steel_Profile_Builder {
               const out = calc();
 
               const values = {
+                profile_id: String(cfg.profileId || ''), // ✅ uus
                 profile_name: cfg.profileName || '',
                 dims_json: dimsPayloadJSON(),
                 material: currentMaterialLabel(),
