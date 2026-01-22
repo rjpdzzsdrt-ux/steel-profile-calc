@@ -48,8 +48,19 @@
     const tbody = table.querySelector('tbody');
     tbody.innerHTML = '';
 
+    function move(arr, from, to) {
+      if (from === to) return arr;
+      if (to < 0 || to >= arr.length) return arr;
+      const copy = arr.slice();
+      const [item] = copy.splice(from, 1);
+      copy.splice(to, 0, item);
+      return copy;
+    }
+
     dims.forEach((d, idx) => {
       const tr = document.createElement('tr');
+      tr.dataset.i = String(idx);
+      tr.draggable = true;
 
       const key = d.key || '';
       const type = (d.type === 'angle') ? 'angle' : 'length';
@@ -62,6 +73,10 @@
       const ret = !!d.ret;
 
       tr.innerHTML = `
+        <td style="width:74px;white-space:nowrap">
+          <button type="button" class="button spb-up" data-i="${idx}" title="Üles">↑</button>
+          <button type="button" class="button spb-down" data-i="${idx}" title="Alla">↓</button>
+        </td>
         <td><input type="text" data-k="key" value="${esc(key)}" style="width:100%"></td>
         <td>
           <select data-k="type" style="width:100%">
@@ -126,14 +141,80 @@
     tbody.oninput = tbody.onchange = syncToHidden;
 
     tbody.onclick = function (e) {
-      const btn = e.target.closest('.spb-del');
-      if (!btn) return;
-      const i = Number(btn.dataset.i);
-      dims.splice(i, 1);
+      const del = e.target.closest('.spb-del');
+      if (del) {
+        const i = Number(del.dataset.i);
+        dims.splice(i, 1);
+        hidden.value = JSON.stringify(dims);
+        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        renderDimsTable();
+        return;
+      }
+
+      const up = e.target.closest('.spb-up');
+      if (up) {
+        const i = Number(up.dataset.i);
+        dims = move(dims, i, i - 1);
+        hidden.value = JSON.stringify(dims);
+        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        renderDimsTable();
+        return;
+      }
+
+      const down = e.target.closest('.spb-down');
+      if (down) {
+        const i = Number(down.dataset.i);
+        dims = move(dims, i, i + 1);
+        hidden.value = JSON.stringify(dims);
+        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        renderDimsTable();
+        return;
+      }
+    };
+
+    let dragIndex = null;
+
+    tbody.addEventListener('dragstart', (e) => {
+      const tr = e.target.closest('tr');
+      if (!tr) return;
+      dragIndex = Array.from(tbody.children).indexOf(tr);
+      tr.style.opacity = '0.55';
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    tbody.addEventListener('dragend', (e) => {
+      const tr = e.target.closest('tr');
+      if (tr) tr.style.opacity = '';
+      dragIndex = null;
+    });
+
+    tbody.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const overTr = e.target.closest('tr');
+      if (!overTr) return;
+      overTr.style.outline = '2px dashed #999';
+    });
+
+    tbody.addEventListener('dragleave', (e) => {
+      const overTr = e.target.closest('tr');
+      if (overTr) overTr.style.outline = '';
+    });
+
+    tbody.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const overTr = e.target.closest('tr');
+      if (!overTr) return;
+      overTr.style.outline = '';
+
+      const dropIndex = Array.from(tbody.children).indexOf(overTr);
+      if (dragIndex == null || dropIndex < 0) return;
+
+      dims = move(dims, dragIndex, dropIndex);
       hidden.value = JSON.stringify(dims);
       hidden.dispatchEvent(new Event('input', { bubbles: true }));
       renderDimsTable();
-    };
+    });
   }
 
   function renderMaterialsTable() {
