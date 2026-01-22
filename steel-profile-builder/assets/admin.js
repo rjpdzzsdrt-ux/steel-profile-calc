@@ -37,29 +37,34 @@
     return prefix + String(max + 1);
   }
 
+  function loadDims() {
+    const hidden = document.getElementById('spb_dims_json');
+    if (!hidden) return [];
+    let dims = safeJSON(hidden.value || '[]', []);
+    if (!Array.isArray(dims)) dims = [];
+    return dims;
+  }
+
+  function saveDims(dims) {
+    const hidden = document.getElementById('spb_dims_json');
+    if (!hidden) return;
+    hidden.value = JSON.stringify(dims);
+    hidden.dispatchEvent(new Event('input', { bubbles: true }));
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   function renderDimsTable() {
     const table = document.getElementById('spb-dims-table');
     const hidden = document.getElementById('spb_dims_json');
     if (!table || !hidden) return;
 
-    let dims = safeJSON(hidden.value || '[]', []);
-    if (!Array.isArray(dims)) dims = [];
+    let dims = loadDims();
 
     const tbody = table.querySelector('tbody');
     tbody.innerHTML = '';
 
-    function move(arr, from, to) {
-      if (from === to) return arr;
-      if (to < 0 || to >= arr.length) return arr;
-      const copy = arr.slice();
-      const [item] = copy.splice(from, 1);
-      copy.splice(to, 0, item);
-      return copy;
-    }
-
     dims.forEach((d, idx) => {
       const tr = document.createElement('tr');
-      tr.draggable = true;
 
       const key = d.key || '';
       const type = (d.type === 'angle') ? 'angle' : 'length';
@@ -72,10 +77,6 @@
       const ret = !!d.ret;
 
       tr.innerHTML = `
-        <td style="width:86px;white-space:nowrap">
-          <button type="button" class="button spb-up" data-i="${idx}" title="Üles" style="padding:0 8px;min-height:28px">↑</button>
-          <button type="button" class="button spb-down" data-i="${idx}" title="Alla" style="padding:0 8px;min-height:28px">↓</button>
-        </td>
         <td><input type="text" data-k="key" value="${esc(key)}" style="width:100%"></td>
         <td>
           <select data-k="type" style="width:100%">
@@ -102,7 +103,11 @@
         <td style="text-align:center">
           <input type="checkbox" data-k="ret" ${ret ? 'checked' : ''} ${type === 'angle' ? '' : 'disabled'}>
         </td>
-        <td><button type="button" class="button spb-del" data-i="${idx}">X</button></td>
+        <td style="white-space:nowrap;text-align:right">
+          <button type="button" class="button spb-up" data-i="${idx}" title="Üles">↑</button>
+          <button type="button" class="button spb-down" data-i="${idx}" title="Alla">↓</button>
+          <button type="button" class="button spb-del" data-i="${idx}" title="Kustuta">X</button>
+        </td>
       `;
 
       tbody.appendChild(tr);
@@ -132,89 +137,54 @@
         };
       }).filter(x => x.key);
 
-      hidden.value = JSON.stringify(dims);
-      hidden.dispatchEvent(new Event('input', { bubbles: true }));
-      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      saveDims(dims);
     }
 
     tbody.oninput = tbody.onchange = syncToHidden;
 
     tbody.onclick = function (e) {
-      const del = e.target.closest('.spb-del');
-      if (del) {
-        const i = Number(del.dataset.i);
-        dims.splice(i, 1);
-        hidden.value = JSON.stringify(dims);
-        hidden.dispatchEvent(new Event('input', { bubbles: true }));
-        renderDimsTable();
-        return;
-      }
-
       const up = e.target.closest('.spb-up');
+      const down = e.target.closest('.spb-down');
+      const del = e.target.closest('.spb-del');
+
+      // ⬆️ üles
       if (up) {
         const i = Number(up.dataset.i);
-        dims = move(dims, i, i - 1);
-        hidden.value = JSON.stringify(dims);
-        hidden.dispatchEvent(new Event('input', { bubbles: true }));
-        renderDimsTable();
+        let arr = loadDims();
+        if (i > 0) {
+          const tmp = arr[i - 1];
+          arr[i - 1] = arr[i];
+          arr[i] = tmp;
+          saveDims(arr);
+          renderDimsTable();
+        }
         return;
       }
 
-      const down = e.target.closest('.spb-down');
+      // ⬇️ alla
       if (down) {
         const i = Number(down.dataset.i);
-        dims = move(dims, i, i + 1);
-        hidden.value = JSON.stringify(dims);
-        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        let arr = loadDims();
+        if (i < arr.length - 1) {
+          const tmp = arr[i + 1];
+          arr[i + 1] = arr[i];
+          arr[i] = tmp;
+          saveDims(arr);
+          renderDimsTable();
+        }
+        return;
+      }
+
+      // ❌ kustuta
+      if (del) {
+        const i = Number(del.dataset.i);
+        let arr = loadDims();
+        arr.splice(i, 1);
+        saveDims(arr);
         renderDimsTable();
         return;
       }
     };
-
-    // Drag & drop reorder
-    let dragIndex = null;
-
-    tbody.addEventListener('dragstart', (e) => {
-      const tr = e.target.closest('tr');
-      if (!tr) return;
-      dragIndex = Array.from(tbody.children).indexOf(tr);
-      tr.style.opacity = '0.55';
-      e.dataTransfer.effectAllowed = 'move';
-    });
-
-    tbody.addEventListener('dragend', (e) => {
-      const tr = e.target.closest('tr');
-      if (tr) tr.style.opacity = '';
-      dragIndex = null;
-    });
-
-    tbody.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      const overTr = e.target.closest('tr');
-      if (!overTr) return;
-      overTr.style.outline = '2px dashed #999';
-    });
-
-    tbody.addEventListener('dragleave', (e) => {
-      const overTr = e.target.closest('tr');
-      if (overTr) overTr.style.outline = '';
-    });
-
-    tbody.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const overTr = e.target.closest('tr');
-      if (!overTr) return;
-      overTr.style.outline = '';
-
-      const dropIndex = Array.from(tbody.children).indexOf(overTr);
-      if (dragIndex == null || dropIndex < 0) return;
-
-      dims = move(dims, dragIndex, dropIndex);
-      hidden.value = JSON.stringify(dims);
-      hidden.dispatchEvent(new Event('input', { bubbles: true }));
-      renderDimsTable();
-    });
   }
 
   function renderMaterialsTable() {
@@ -234,7 +204,7 @@
         <td><input type="text" data-k="key" value="${esc(m.key || '')}" style="width:100%"></td>
         <td><input type="text" data-k="label" value="${esc(m.label || '')}" style="width:100%"></td>
         <td><input type="number" step="0.01" data-k="eur_m2" value="${esc(m.eur_m2 ?? '')}" style="width:100%"></td>
-        <td><button type="button" class="button spb-mdel" data-i="${idx}">X</button></td>
+        <td style="white-space:nowrap;text-align:right"><button type="button" class="button spb-mdel" data-i="${idx}">X</button></td>
       `;
       tbody.appendChild(tr);
     });
