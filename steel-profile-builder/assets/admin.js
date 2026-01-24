@@ -53,12 +53,91 @@
     hidden.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // =========================
+  // ✅ AUTO PATTERN SYNC (dims order -> pattern)
+  // =========================
+  function ensurePatternSyncUI() {
+    const ta = getPatternTextarea();
+    if (!ta) return null;
+
+    // already created?
+    const existing = document.getElementById('spb-auto-pattern-sync-wrap');
+    if (existing) return existing;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'spb-auto-pattern-sync-wrap';
+    wrap.style.cssText = 'margin:8px 0 10px; padding:10px; border:1px solid #e9e9e9; border-radius:10px; background:#fafafa; display:flex; gap:10px; align-items:center; flex-wrap:wrap;';
+
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex; align-items:center; gap:8px; font-weight:600;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'spb-auto-pattern-sync';
+    cb.checked = true;
+
+    const txt = document.createElement('span');
+    txt.textContent = 'Sünkrooni Pattern automaatselt mõõtude järjekorraga (soovituslik)';
+
+    label.appendChild(cb);
+    label.appendChild(txt);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'opacity:.75; font-size:12px;';
+    hint.textContent = 'Kui sees: Pattern lukustub ja uuendub automaatselt, kui liigutad mõõte ↑↓ või lisad uusi ridu.';
+
+    wrap.appendChild(label);
+    wrap.appendChild(hint);
+
+    // Insert right above textarea
+    ta.parentNode.insertBefore(wrap, ta);
+
+    // Toggle textarea readonly
+    function applyLock() {
+      const on = cb.checked;
+      ta.readOnly = on;
+      ta.style.opacity = on ? '0.75' : '1';
+      ta.style.background = on ? '#f6f6f6' : '';
+    }
+    cb.addEventListener('change', applyLock);
+    applyLock();
+
+    return wrap;
+  }
+
+  function isAutoPatternSyncOn() {
+    const cb = document.getElementById('spb-auto-pattern-sync');
+    return cb ? !!cb.checked : false;
+  }
+
+  function syncPatternFromDims(dims) {
+    // pattern = dims keys in their current order
+    const keys = (Array.isArray(dims) ? dims : [])
+      .map(d => (d && d.key ? String(d.key).trim() : ''))
+      .filter(Boolean);
+
+    // Only set if different to reduce noise
+    const current = getPatternArray();
+    const same =
+      Array.isArray(current) &&
+      current.length === keys.length &&
+      current.every((v, i) => String(v) === String(keys[i]));
+
+    if (!same) setPatternArray(keys);
+  }
+
+  // =========================
+  // DIMS TABLE
+  // =========================
   function renderDimsTable() {
     const table = document.getElementById('spb-dims-table');
     const hidden = document.getElementById('spb_dims_json');
     if (!table || !hidden) return;
 
     let dims = loadDims();
+
+    // ensure sync UI exists (Pattern box is on the same edit screen)
+    ensurePatternSyncUI();
+    if (isAutoPatternSyncOn()) syncPatternFromDims(dims);
 
     const tbody = table.querySelector('tbody');
     tbody.innerHTML = '';
@@ -138,6 +217,9 @@
       }).filter(x => x.key);
 
       saveDims(dims);
+
+      // ✅ keep pattern in sync when keys/order change
+      if (isAutoPatternSyncOn()) syncPatternFromDims(dims);
     }
 
     tbody.oninput = tbody.onchange = syncToHidden;
@@ -156,6 +238,7 @@
           arr[i - 1] = arr[i];
           arr[i] = tmp;
           saveDims(arr);
+          if (isAutoPatternSyncOn()) syncPatternFromDims(arr);
           renderDimsTable();
         }
         return;
@@ -170,6 +253,7 @@
           arr[i + 1] = arr[i];
           arr[i] = tmp;
           saveDims(arr);
+          if (isAutoPatternSyncOn()) syncPatternFromDims(arr);
           renderDimsTable();
         }
         return;
@@ -181,12 +265,16 @@
         let arr = loadDims();
         arr.splice(i, 1);
         saveDims(arr);
+        if (isAutoPatternSyncOn()) syncPatternFromDims(arr);
         renderDimsTable();
         return;
       }
     };
   }
 
+  // =========================
+  // MATERIALS TABLE (unchanged)
+  // =========================
   function renderMaterialsTable() {
     const table = document.getElementById('spb-materials-table');
     const hidden = document.getElementById('spb_materials_json');
@@ -223,6 +311,7 @@
 
       hidden.value = JSON.stringify(mats);
       hidden.dispatchEvent(new Event('input', { bubbles: true }));
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     tbody.oninput = tbody.onchange = sync;
@@ -234,6 +323,7 @@
       mats.splice(i, 1);
       hidden.value = JSON.stringify(mats);
       hidden.dispatchEvent(new Event('input', { bubbles: true }));
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
       renderMaterialsTable();
     };
   }
@@ -255,7 +345,9 @@
 
     hidden.value = JSON.stringify(dims);
     hidden.dispatchEvent(new Event('input', { bubbles: true }));
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
 
+    // existing checkbox: append new key to pattern if user wants
     const auto = document.getElementById('spb-auto-append-pattern');
     if (auto && auto.checked) {
       const pat = getPatternArray();
@@ -263,10 +355,15 @@
       setPatternArray(pat);
     }
 
+    // ✅ if auto sync on: override pattern to follow dims order (stronger rule)
+    if (isAutoPatternSyncOn()) syncPatternFromDims(dims);
+
     renderDimsTable();
   }
 
   document.addEventListener('DOMContentLoaded', function () {
+    ensurePatternSyncUI();
+
     renderDimsTable();
     renderMaterialsTable();
 
@@ -285,8 +382,12 @@
         mats.push({ key: 'NEW', label: 'Uus materjal', eur_m2: 0 });
         hidden.value = JSON.stringify(mats);
         hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
         renderMaterialsTable();
       });
     }
+
+    // Kui user teeb Pattern textarea unlocki ja hakkab käsitsi muutma,
+    // siis me ei sunni seda tagasi (ainult siis, kui auto sync on).
   });
 })();
