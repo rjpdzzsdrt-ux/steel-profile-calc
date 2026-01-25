@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Steel Profile Builder
  * Description: Profiilikalkulaator (SVG joonis + mõõtjooned + nurkade suund/poolsus) + administ muudetavad mõõdud + hinnastus + WPForms.
- * Version: 0.4.6
+ * Version: 0.4.7
  * Author: Steel.ee
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) exit;
 
 class Steel_Profile_Builder {
   const CPT = 'spb_profile';
-  const VER = '0.4.6';
+  const VER = '0.4.7';
 
   public function __construct() {
     add_action('init', [$this, 'register_cpt']);
@@ -651,6 +651,7 @@ class Steel_Profile_Builder {
           <div class="spb-top">
             <div class="spb-panel spb-panel-drawing">
               <div class="spb-panel-title">Joonis</div>
+
               <div class="spb-drawing">
                 <svg class="spb-svg" viewBox="0 0 820 460" width="100%" height="460">
                   <defs>
@@ -661,6 +662,21 @@ class Steel_Profile_Builder {
                   <g class="spb-segs"></g>
                   <g class="spb-dimlayer"></g>
                 </svg>
+              </div>
+
+              <!-- ✅ Title block (technical drawing feel) -->
+              <div class="spb-titleblock" aria-label="Tootmisinfo">
+                <div class="spb-tb-row">
+                  <div class="spb-tb-item"><span>Profiil</span><strong class="spb-tb-profile">—</strong></div>
+                  <div class="spb-tb-item"><span>Kuupäev</span><strong class="spb-tb-date">—</strong></div>
+                  <div class="spb-tb-item"><span>Skaala</span><strong>auto</strong></div>
+                </div>
+                <div class="spb-tb-row">
+                  <div class="spb-tb-item"><span>Materjal</span><strong class="spb-tb-mat">—</strong></div>
+                  <div class="spb-tb-item"><span>Detaili pikkus</span><strong class="spb-tb-len">—</strong></div>
+                  <div class="spb-tb-item"><span>Kogus</span><strong class="spb-tb-qty">—</strong></div>
+                  <div class="spb-tb-item"><span>Σ s</span><strong class="spb-tb-sum">—</strong></div>
+                </div>
               </div>
             </div>
 
@@ -714,32 +730,74 @@ class Steel_Profile_Builder {
         </div>
 
         <style>
-          .spb-front{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+          .spb-front{
+            font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+            --spb-accent:#111;
+            --spb-border:#eee;
+            --spb-text:#111;
+            --spb-muted:#666;
+          }
           .spb-front .spb-wrap{max-width:1100px;margin:0 auto}
           .spb-front .spb-head{margin-bottom:12px}
-          .spb-front .spb-title{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15}
-          .spb-front .spb-sub{margin-top:6px;font-size:12.5px;color:#666}
+          .spb-front .spb-title{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:var(--spb-text);line-height:1.15}
+          .spb-front .spb-sub{margin-top:6px;font-size:12.5px;color:var(--spb-muted)}
 
-          .spb-front .spb-panel{background:#fff;border:1px solid #eee;border-radius:12px;padding:12px}
-          .spb-front .spb-panel-title{font-size:13px;font-weight:700;color:#111;margin:0 0 8px 0}
+          .spb-front .spb-panel{background:#fff;border:1px solid var(--spb-border);border-radius:12px;padding:12px}
+          .spb-front .spb-panel-title{font-size:13px;font-weight:700;color:var(--spb-text);margin:0 0 8px 0}
 
           .spb-front .spb-top{display:grid;grid-template-columns:1.7fr 1fr;gap:16px;align-items:start}
 
-          /* JOONIS: üks raam, rohkem ruumi */
+          /* SVG: technical frame, no double boxing */
           .spb-front .spb-drawing{border:0;background:transparent;padding:0}
           .spb-front .spb-svg{
             display:block;width:100%;
             height:460px;
             border-radius:12px;
             background:#fff;
-            border:1px solid #eee;
+            border:1px solid var(--spb-border);
           }
 
           .spb-front .spb-segs line{stroke:#111;stroke-width:3}
           .spb-front .spb-dimlayer text{font-size:13px;fill:#111;dominant-baseline:middle;text-anchor:middle}
           .spb-front .spb-dimlayer line{stroke:#111}
 
-          /* Mõõdud: kompaktsem + sama kõrgus */
+          /* Title block */
+          .spb-front .spb-titleblock{
+            margin-top:10px;
+            border:1px solid var(--spb-border);
+            border-radius:12px;
+            background:#fafafa;
+            padding:10px 12px;
+          }
+          .spb-front .spb-tb-row{
+            display:grid;
+            grid-template-columns:1.2fr .9fr .6fr;
+            gap:10px;
+          }
+          .spb-front .spb-tb-row + .spb-tb-row{
+            margin-top:8px;
+            padding-top:8px;
+            border-top:1px solid var(--spb-border);
+            grid-template-columns:1fr 1fr .7fr .7fr;
+          }
+          .spb-front .spb-tb-item span{
+            display:block;
+            font-size:11.5px;
+            color:#777;
+            margin-bottom:3px;
+          }
+          .spb-front .spb-tb-item strong{
+            display:block;
+            font-size:13.5px;
+            color:#111;
+            font-weight:800;
+            line-height:1.2;
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+          }
+
+          /* Dims */
           .spb-front .spb-dims-scroll{max-height:460px;overflow:auto;padding-right:8px}
           .spb-front .spb-inputs{display:grid;grid-template-columns:1fr 140px;gap:8px 10px;align-items:center}
           .spb-front .spb-inputs label{font-size:12.5px;color:#444}
@@ -752,17 +810,21 @@ class Steel_Profile_Builder {
             color:#111;
             font-size:14px
           }
-          .spb-front input:focus,.spb-front select:focus{outline:none;border-color:#bdbdbd;box-shadow:0 0 0 3px rgba(0,0,0,0.04)}
+          .spb-front input:focus,.spb-front select:focus{
+            outline:none;
+            border-color:rgba(0,0,0,0.25);
+            box-shadow:0 0 0 3px rgba(0,0,0,0.05)
+          }
           .spb-front .spb-hint{margin-top:10px;font-size:12.5px;color:#777}
 
-          /* Tellimus */
+          /* Order */
           .spb-front .spb-order-grid{display:grid;grid-template-columns:1fr 1fr .7fr;gap:10px}
           .spb-front .spb-field label{display:block;font-size:12.5px;color:#666;margin:0 0 6px 0}
 
           .spb-front .spb-results{
             margin-top:12px;
             background:#fafafa;
-            border:1px solid #eee;
+            border:1px solid var(--spb-border);
             border-radius:12px;
             padding:10px 12px
           }
@@ -776,14 +838,14 @@ class Steel_Profile_Builder {
             width:100%;
             padding:12px 14px;
             border-radius:12px;
-            border:1px solid #111;
+            border:1px solid var(--spb-accent);
             cursor:pointer;
             font-weight:800;
-            background:#111;
+            background:var(--spb-accent);
             color:#fff;
             font-size:14px
           }
-          .spb-front .spb-btn:hover{filter:brightness(0.95)}
+          .spb-front .spb-btn:hover{filter:brightness(0.96)}
           .spb-front .spb-legal{font-size:12.5px;color:#777}
 
           .spb-front .spb-error{margin:10px 0;padding:10px;border:1px solid #ffb4b4;background:#fff1f1;border-radius:10px;color:#7a1b1b}
@@ -793,6 +855,8 @@ class Steel_Profile_Builder {
             .spb-front .spb-svg{height:360px}
             .spb-front .spb-dims-scroll{max-height:320px}
             .spb-front .spb-order-grid{grid-template-columns:1fr}
+            .spb-front .spb-tb-row{grid-template-columns:1fr 1fr}
+            .spb-front .spb-tb-row + .spb-tb-row{grid-template-columns:1fr 1fr}
           }
         </style>
 
@@ -801,6 +865,19 @@ class Steel_Profile_Builder {
             const root = document.getElementById('<?php echo esc_js($uid); ?>');
             if (!root) return;
             const cfg = JSON.parse(root.dataset.spb || '{}');
+
+            // ✅ CTA värv automaatselt lehe peamisest nupust (Elementor)
+            (function pickAccent(){
+              try {
+                const btn = document.querySelector('.elementor a.elementor-button, .elementor-button, a.elementor-button-link, button');
+                if (!btn) return;
+                const cs = window.getComputedStyle(btn);
+                const bg = cs && cs.backgroundColor;
+                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                  root.style.setProperty('--spb-accent', bg);
+                }
+              } catch(e){}
+            })();
 
             const err = root.querySelector('.spb-error');
             function showErr(msg){ err.style.display='block'; err.textContent=msg; }
@@ -826,6 +903,14 @@ class Steel_Profile_Builder {
 
             const formWrap = root.querySelector('.spb-form-wrap');
             const openBtn = root.querySelector('.spb-open-form');
+
+            // title block refs
+            const tbProfile = root.querySelector('.spb-tb-profile');
+            const tbDate = root.querySelector('.spb-tb-date');
+            const tbMat = root.querySelector('.spb-tb-mat');
+            const tbLen = root.querySelector('.spb-tb-len');
+            const tbQty = root.querySelector('.spb-tb-qty');
+            const tbSum = root.querySelector('.spb-tb-sum');
 
             const stateVal = {};
 
@@ -1041,7 +1126,7 @@ class Steel_Profile_Builder {
               const vatPct = toNum(cfg.vat, 24);
               const totalVat = totalNoVat * (1 + vatPct/100);
 
-              return { sumSmm, area, qty, matNoVat, jmNoVat, totalNoVat, totalVat, vatPct };
+              return { sumSmm, sumSm, area, qty, matNoVat, jmNoVat, totalNoVat, totalVat, vatPct };
             }
 
             function dimsPayloadJSON(){
@@ -1092,18 +1177,37 @@ class Steel_Profile_Builder {
               Object.keys(map).forEach(k => setField(map[k], values[k] ?? ''));
             }
 
+            function setTitleBlock(out){
+              try{
+                if (tbProfile) tbProfile.textContent = cfg.profileName || '—';
+                if (tbDate) {
+                  const d = new Date();
+                  const yyyy = d.getFullYear();
+                  const mm = String(d.getMonth()+1).padStart(2,'0');
+                  const dd = String(d.getDate()).padStart(2,'0');
+                  tbDate.textContent = `${dd}.${mm}.${yyyy}`;
+                }
+                if (tbMat) tbMat.textContent = currentMaterialLabel() || '—';
+                if (tbLen) tbLen.textContent = `${clamp(lenEl.value, 50, 8000)} mm`;
+                if (tbQty) tbQty.textContent = String(clamp(qtyEl.value, 1, 999));
+                if (tbSum) tbSum.textContent = `${out.sumSmm} mm`;
+              }catch(e){}
+            }
+
             function render(){
               const dimMap = buildDimMap();
-              const out = computePolyline(dimMap);
+              const outPoly = computePolyline(dimMap);
 
-              renderSegments(out.pts, out.segStyle);
-              renderDims(dimMap, out.pts);
+              renderSegments(outPoly.pts, outPoly.segStyle);
+              renderDims(dimMap, outPoly.pts);
 
               const price = calc();
               jmEl.textContent = price.jmNoVat.toFixed(2) + ' €';
               matEl.textContent = price.matNoVat.toFixed(2) + ' €';
               novatEl.textContent = price.totalNoVat.toFixed(2) + ' €';
               vatEl.textContent = price.totalVat.toFixed(2) + ' €';
+
+              setTitleBlock(price);
             }
 
             inputsWrap.addEventListener('input', (e)=>{
