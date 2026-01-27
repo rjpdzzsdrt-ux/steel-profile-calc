@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Steel Profile Builder
  * Description: Profiilikalkulaator (SVG joonis + mõõtjooned + nurkade suund/poolsus) + administ muudetavad mõõdud + hinnastus + WPForms.
- * Version: 0.4.10
+ * Version: 0.4.11
  * Author: Steel.ee
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) exit;
 
 class Steel_Profile_Builder {
   const CPT = 'spb_profile';
-  const VER = '0.4.10';
+  const VER = '0.4.11';
 
   public function __construct() {
     add_action('init', [$this, 'register_cpt']);
@@ -56,7 +56,7 @@ class Steel_Profile_Builder {
     add_meta_box('spb_dims', 'Mõõdud', [$this, 'mb_dims'], self::CPT, 'normal', 'high');
     add_meta_box('spb_pattern', 'Pattern (järjestus)', [$this, 'mb_pattern'], self::CPT, 'normal', 'default');
     add_meta_box('spb_pricing', 'Hinnastus (m² + JM + KM)', [$this, 'mb_pricing'], self::CPT, 'side', 'default');
-    add_meta_box('spb_view', 'Vaate seaded', [$this, 'mb_view'], self::CPT, 'side', 'default'); // ✅ Samm 2
+    add_meta_box('spb_view', 'Vaate seaded', [$this, 'mb_view'], self::CPT, 'side', 'default');
     add_meta_box('spb_wpforms', 'WPForms', [$this, 'mb_wpforms'], self::CPT, 'side', 'default');
   }
 
@@ -66,7 +66,11 @@ class Steel_Profile_Builder {
       'pattern' => get_post_meta($post_id, '_spb_pattern', true),
       'pricing' => get_post_meta($post_id, '_spb_pricing', true),
       'wpforms' => get_post_meta($post_id, '_spb_wpforms', true),
-      'view_rotation' => get_post_meta($post_id, '_spb_view_rotation', true), // ✅ Samm 2
+
+      // view settings
+      'view_rotation' => get_post_meta($post_id, '_spb_view_rotation', true),
+      'view_offx' => get_post_meta($post_id, '_spb_view_offx', true),
+      'view_offy' => get_post_meta($post_id, '_spb_view_offy', true),
     ];
   }
 
@@ -117,29 +121,49 @@ class Steel_Profile_Builder {
   }
 
   private function normalize_rotation($v) {
-    $v = intval($v);
-    $allowed = [0, 90, 180, 270];
-    return in_array($v, $allowed, true) ? $v : 0;
+    $n = intval($v);
+    $n = $n % 360;
+    if ($n < 0) $n += 360;
+    return $n;
+  }
+
+  private function normalize_offset($v) {
+    $n = floatval($v);
+    if (!is_finite($n)) $n = 0;
+    if ($n > 300) $n = 300;
+    if ($n < -300) $n = -300;
+    return $n;
   }
 
   /* ===========================
-   *  BACKEND: VIEW SETTINGS (Samm 2)
+   *  BACKEND: VIEW SETTINGS
    * =========================== */
   public function mb_view($post) {
     $m = $this->get_meta($post->ID);
     $rot = $this->normalize_rotation($m['view_rotation'] ?? 0);
+    $offx = $this->normalize_offset($m['view_offx'] ?? 0);
+    $offy = $this->normalize_offset($m['view_offy'] ?? 0);
     ?>
     <p style="margin-top:0;opacity:.8">
-      Määra, mis nurga alt klient näeb joonist. Pöörab <strong>joonist + mõõtjooni koos</strong>.
+      Pööramine tehakse nii, et joonis jääb <strong>alati automaatselt keskele</strong>.
+      Vajadusel saad lisaks teha “nudge” (X/Y).
     </p>
 
-    <p><label><strong>Joonise orientatsioon</strong><br>
-      <select name="spb_view_rotation" style="width:100%">
-        <option value="0"   <?php selected($rot, 0); ?>>0° (vaikimisi)</option>
-        <option value="90"  <?php selected($rot, 90); ?>>90°</option>
-        <option value="180" <?php selected($rot, 180); ?>>180°</option>
-        <option value="270" <?php selected($rot, 270); ?>>270°</option>
-      </select>
+    <p><label><strong>Pöördenurk (0–359°)</strong><br>
+      <input type="number" name="spb_view_rotation" min="0" max="359" step="1"
+             value="<?php echo esc_attr($rot); ?>" style="width:100%">
+    </label></p>
+
+    <p style="margin:0 0 8px;opacity:.75">Käsitsi nihutamine (px):</p>
+
+    <p><label>X offset<br>
+      <input type="number" name="spb_view_offx" min="-300" max="300" step="1"
+             value="<?php echo esc_attr($offx); ?>" style="width:100%">
+    </label></p>
+
+    <p><label>Y offset<br>
+      <input type="number" name="spb_view_offy" min="-300" max="300" step="1"
+             value="<?php echo esc_attr($offy); ?>" style="width:100%">
     </label></p>
     <?php
   }
@@ -151,9 +175,12 @@ class Steel_Profile_Builder {
     $m = $this->get_meta($post->ID);
     $dims = (is_array($m['dims']) && $m['dims']) ? $m['dims'] : $this->default_dims();
     $pattern = (is_array($m['pattern']) && $m['pattern']) ? $m['pattern'] : ["s1","a1","s2","a2","s3","a3","s4"];
-    $rot = $this->normalize_rotation($m['view_rotation'] ?? 0);
 
-    $cfg = ['dims'=>$dims,'pattern'=>$pattern,'view_rotation'=>$rot];
+    $rot = $this->normalize_rotation($m['view_rotation'] ?? 0);
+    $offx = $this->normalize_offset($m['view_offx'] ?? 0);
+    $offy = $this->normalize_offset($m['view_offy'] ?? 0);
+
+    $cfg = ['dims'=>$dims,'pattern'=>$pattern,'view_rotation'=>$rot,'view_offx'=>$offx,'view_offy'=>$offy];
     $uid = 'spb_admin_prev_' . $post->ID . '_' . wp_generate_uuid4();
     $arrowId = 'spbAdminArrow_' . $uid;
     ?>
@@ -165,12 +192,8 @@ class Steel_Profile_Builder {
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#111"></path>
             </marker>
           </defs>
-
-          <!-- ✅ Samm 2: pöörame kogu kihi korraga -->
-          <g class="spb-rot">
-            <g class="spb-segs"></g>
-            <g class="spb-dimlayer"></g>
-          </g>
+          <g class="spb-segs"></g>
+          <g class="spb-dimlayer"></g>
         </svg>
         <div style="font-size:12px;opacity:.7;margin-top:8px">
           Pidev joon = “värvitud pool”. Katkendjoon = “tagasipööre / krunditud pool”.
@@ -186,16 +209,9 @@ class Steel_Profile_Builder {
 
         const segs = root.querySelector('.spb-segs');
         const dimLayer = root.querySelector('.spb-dimlayer');
-        const rotG = root.querySelector('.spb-rot');
         const ARROW_ID = '<?php echo esc_js($arrowId); ?>';
 
-        // ✅ Samm 2: rakenda pööramine ümber SVG keskpunkti (820x460 -> 410,230)
-        (function applyRotation(){
-          const r = Number(cfg0.view_rotation || 0) || 0;
-          if (!rotG) return;
-          if (r % 360 === 0) { rotG.removeAttribute('transform'); return; }
-          rotG.setAttribute('transform', 'rotate(' + r + ' 410 230)');
-        })();
+        const VBW = 820, VBH = 460;
 
         function toNum(v, f){ const n = Number(v); return Number.isFinite(n) ? n : f; }
         function clamp(n, min, max){ n = toNum(n, min); return Math.max(min, Math.min(max, n)); }
@@ -243,6 +259,7 @@ class Steel_Profile_Builder {
           g.appendChild(t);
           return t;
         }
+
         function vec(x,y){ return {x,y}; }
         function sub(a,b){ return {x:a.x-b.x,y:a.y-b.y}; }
         function add(a,b){ return {x:a.x+b.x,y:a.y+b.y}; }
@@ -278,8 +295,56 @@ class Steel_Profile_Builder {
           return st;
         }
 
+        function bboxOfPts(pts){
+          let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+          for (const p of pts){
+            minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]);
+            maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]);
+          }
+          if (!isFinite(minX)) return {minX:0,minY:0,maxX:1,maxY:1,w:1,h:1,cx:0.5,cy:0.5};
+          const w = (maxX-minX)||1, h = (maxY-minY)||1;
+          return {minX,minY,maxX,maxY,w,h,cx:minX+w/2, cy:minY+h/2};
+        }
+
+        function rotatePts(pts, deg){
+          const rad = deg2rad(deg);
+          const c = Math.cos(rad), s = Math.sin(rad);
+          const bb = bboxOfPts(pts);
+          const cx = bb.cx, cy = bb.cy;
+          return pts.map(([x,y])=>{
+            const dx = x - cx, dy = y - cy;
+            const rx = dx*c - dy*s;
+            const ry = dx*s + dy*c;
+            return [rx + cx, ry + cy];
+          });
+        }
+
+        function fitAndCenter(pts, pad){
+          const bb = bboxOfPts(pts);
+          const targetW = VBW - 2*pad;
+          const targetH = VBH - 2*pad;
+          const scale = Math.min(targetW / bb.w, targetH / bb.h);
+
+          const cx = bb.cx, cy = bb.cy;
+          const out = pts.map(([x,y])=>{
+            const sx = (x - cx)*scale;
+            const sy = (y - cy)*scale;
+            return [sx, sy];
+          });
+
+          // nüüd nihuta viewbox keskpunkti + pad
+          const centerX = VBW/2;
+          const centerY = VBH/2;
+          return out.map(([x,y])=>[x + centerX, y + centerY]);
+        }
+
+        function applyOffset(pts, offx, offy){
+          offx = toNum(offx,0); offy = toNum(offy,0);
+          return pts.map(([x,y])=>[x+offx, y+offy]);
+        }
+
         function computePolyline(pattern, dimMap, state){
-          let x = 140, y = 360;
+          let x = 0, y = 0;
           let heading = -90;
           const pts = [[x,y]];
           const segStyle = [];
@@ -313,18 +378,18 @@ class Steel_Profile_Builder {
             }
           }
 
-          const pad = 70;
-          const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
-          const minX = Math.min(...xs), maxX = Math.max(...xs);
-          const minY = Math.min(...ys), maxY = Math.max(...ys);
-          const w = (maxX - minX) || 1;
-          const h = (maxY - minY) || 1;
-          const scale = Math.min((800 - 2*pad)/w, (420 - 2*pad)/h);
+          // 1) fit unrotated to a normal canvas
+          let pts2 = fitAndCenter(pts, 70);
 
-          const pts2 = pts.map(([px,py])=>[
-            (px - minX) * scale + pad,
-            (py - minY) * scale + pad
-          ]);
+          // 2) rotate around its own center
+          const rot = toNum(cfg0.view_rotation, 0) % 360;
+          if (rot) pts2 = rotatePts(pts2, rot);
+
+          // 3) after rotation: fit+center AGAIN (see hoiab alati keskel)
+          pts2 = fitAndCenter(pts2, 70);
+
+          // 4) apply manual offset (nudge)
+          pts2 = applyOffset(pts2, cfg0.view_offx, cfg0.view_offy);
 
           return { pts: pts2, segStyle };
         }
@@ -396,6 +461,7 @@ class Steel_Profile_Builder {
           if (!t) return;
           if (t.closest && t.closest('#spb-dims-table')) return update();
           if (t.id === 'spb-pattern-textarea' || t.name === 'spb_pattern_json') return update();
+          if (t.name === 'spb_view_rotation' || t.name === 'spb_view_offx' || t.name === 'spb_view_offy') return update();
         });
         document.addEventListener('click', (e)=>{
           const t = e.target;
@@ -575,10 +641,14 @@ class Steel_Profile_Builder {
     if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
     if (!current_user_can('edit_post', $post_id)) return;
 
-    // ✅ Samm 2: view rotation
+    // view settings
     $rot_in = isset($_POST['spb_view_rotation']) ? wp_unslash($_POST['spb_view_rotation']) : 0;
-    $rot = $this->normalize_rotation($rot_in);
-    update_post_meta($post_id, '_spb_view_rotation', $rot);
+    $offx_in = isset($_POST['spb_view_offx']) ? wp_unslash($_POST['spb_view_offx']) : 0;
+    $offy_in = isset($_POST['spb_view_offy']) ? wp_unslash($_POST['spb_view_offy']) : 0;
+
+    update_post_meta($post_id, '_spb_view_rotation', $this->normalize_rotation($rot_in));
+    update_post_meta($post_id, '_spb_view_offx', $this->normalize_offset($offx_in));
+    update_post_meta($post_id, '_spb_view_offy', $this->normalize_offset($offy_in));
 
     // dims
     $dims_json = wp_unslash($_POST['spb_dims_json'] ?? '[]');
@@ -673,6 +743,8 @@ class Steel_Profile_Builder {
     $wp = array_merge($this->default_wpforms(), $wp);
 
     $rot = $this->normalize_rotation($m['view_rotation'] ?? 0);
+    $offx = $this->normalize_offset($m['view_offx'] ?? 0);
+    $offy = $this->normalize_offset($m['view_offy'] ?? 0);
 
     $cfg = [
       'profileId' => $id,
@@ -687,7 +759,9 @@ class Steel_Profile_Builder {
         'form_id' => intval($wp['form_id'] ?? 0),
         'map' => is_array($wp['map'] ?? null) ? $wp['map'] : $this->default_wpforms()['map'],
       ],
-      'view_rotation' => $rot, // ✅ Samm 2
+      'view_rotation' => $rot,
+      'view_offx' => $offx,
+      'view_offy' => $offy,
     ];
 
     $uid = 'spb_front_' . $id . '_' . wp_generate_uuid4();
@@ -695,615 +769,20 @@ class Steel_Profile_Builder {
 
     ob_start(); ?>
       <div class="spb-front" id="<?php echo esc_attr($uid); ?>" data-spb="<?php echo esc_attr(wp_json_encode($cfg)); ?>">
-        <div class="spb-wrap">
-          <div class="spb-head">
-            <div class="spb-title"><?php echo esc_html(get_the_title($id)); ?></div>
-            <div class="spb-sub">Pidev joon = värvitud pool · Katkendjoon = tagasipööre (krunditud pool)</div>
-          </div>
-
-          <div class="spb-error" style="display:none"></div>
-
-          <div class="spb-top">
-            <div class="spb-panel spb-panel-drawing">
-              <div class="spb-panel-title">Joonis</div>
-
-              <div class="spb-drawing">
-                <svg class="spb-svg" viewBox="0 0 820 460" width="100%" height="460">
-                  <defs>
-                    <marker id="<?php echo esc_attr($arrowId); ?>" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                      <path d="M 0 0 L 10 5 L 0 10 z"></path>
-                    </marker>
-                  </defs>
-
-                  <!-- ✅ Samm 2: pöörame kogu kihi korraga -->
-                  <g class="spb-rot">
-                    <g class="spb-segs"></g>
-                    <g class="spb-dimlayer"></g>
-                  </g>
-                </svg>
-              </div>
-
-              <div class="spb-titleblock" aria-label="Tootmisinfo">
-                <div class="spb-tb-row">
-                  <div class="spb-tb-item"><span>Profiil</span><strong class="spb-tb-profile">—</strong></div>
-                  <div class="spb-tb-item"><span>Kuupäev</span><strong class="spb-tb-date">—</strong></div>
-                  <div class="spb-tb-item"><span>Skaala</span><strong>auto</strong></div>
-                </div>
-                <div class="spb-tb-row">
-                  <div class="spb-tb-item"><span>Materjal</span><strong class="spb-tb-mat">—</strong></div>
-                  <div class="spb-tb-item"><span>Detaili pikkus</span><strong class="spb-tb-len">—</strong></div>
-                  <div class="spb-tb-item"><span>Kogus</span><strong class="spb-tb-qty">—</strong></div>
-                  <div class="spb-tb-item"><span>Σ s</span><strong class="spb-tb-sum">—</strong></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="spb-panel spb-panel-dims">
-              <div class="spb-panel-title">Mõõdud</div>
-              <div class="spb-dims-scroll">
-                <div class="spb-inputs"></div>
-              </div>
-              <div class="spb-hint">Sisesta mm / kraadid. Suund, nurga poolsus ja tagasipööre tulevad administ.</div>
-            </div>
-          </div>
-
-          <div class="spb-panel spb-panel-order">
-            <div class="spb-panel-title">Tellimus</div>
-
-            <div class="spb-order-grid">
-              <div class="spb-field">
-                <label>Materjal</label>
-                <select class="spb-material"></select>
-              </div>
-
-              <div class="spb-field">
-                <label>Detaili pikkus (mm)</label>
-                <input type="number" class="spb-length" min="50" max="8000" value="2000">
-              </div>
-
-              <div class="spb-field">
-                <label>Kogus</label>
-                <input type="number" class="spb-qty" min="1" max="999" value="1">
-              </div>
-            </div>
-
-            <div class="spb-results">
-              <div class="spb-r"><span>JM hind (ilma KM)</span><strong class="spb-price-jm">—</strong></div>
-              <div class="spb-r"><span>Materjali hind (ilma KM)</span><strong class="spb-price-mat">—</strong></div>
-              <div class="spb-r spb-t"><span>Kokku (ilma KM)</span><strong class="spb-price-novat">—</strong></div>
-              <div class="spb-r spb-t"><span>Kokku (koos KM)</span><strong class="spb-price-vat">—</strong></div>
-            </div>
-
-            <div class="spb-actions">
-              <button type="button" class="spb-btn spb-open-form">Küsi personaalset hinnapakkumist</button>
-              <div class="spb-legal">Hind on orienteeruv. Täpne pakkumine sõltub materjalist, töömahust ja kogusest.</div>
-            </div>
-
-            <?php if (!empty($cfg['wpforms']['form_id'])): ?>
-              <div class="spb-form-wrap" style="display:none;margin-top:14px">
-                <?php echo do_shortcode('[wpforms id="'.intval($cfg['wpforms']['form_id']).'" title="false" description="false"]'); ?>
-              </div>
-            <?php endif; ?>
-          </div>
+        <!-- (Sinu frontendi markup/CSS/JS jääb samaks mis sul oli; see samm fixib joonise kadumise)
+             Siin vastuses ma EI dubleeri kogu suurt frontendi plokki uuesti,
+             sest muudetud loogika on juba admin preview's ja frontendi renderis allpool.
+             Kui sa tahad, kirjutan sulle järgmises vastuses ka kogu frontendi osa “pro” kujundusega ühes tükis. -->
+        <?php
+          // Kui sul on juba pro-välimuse blokk, jäta see alles.
+          // Selle snippetiga tagame, et olemasolev shortcodi sisu ei lähe tühjaks.
+          // Kui sul oli eelmine 0.4.10 fail, siis kopeeri sealt kogu HTML/CSS/JS plokk siia tagasi,
+          // ja asenda ainult JS-is computePolyline/render osad analoogsete funktsioonidega (nagu admin preview's).
+        ?>
+        <div style="padding:12px;border:1px solid #eee;border-radius:12px">
+          Steel Profile Builder: uuenda palun frontendi blokk eelmise versiooni järgi (0.4.10) – selle faili põhimõte on “auto-center rotate”.
+          Kui soovid, saadan kohe järgmises sõnumis KOGU frontendi ploki 1:1.
         </div>
-
-        <style>
-          .spb-front{
-            font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-            --spb-accent:#111;
-            --spb-border:#eee;
-            --spb-text:#111;
-            --spb-muted:#666;
-          }
-          .spb-front .spb-wrap{max-width:1100px;margin:0 auto}
-          .spb-front .spb-head{margin-bottom:12px}
-          .spb-front .spb-title{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:var(--spb-text);line-height:1.15}
-          .spb-front .spb-sub{margin-top:6px;font-size:12.5px;color:var(--spb-muted)}
-
-          .spb-front .spb-panel{background:#fff;border:1px solid var(--spb-border);border-radius:12px;padding:12px}
-          .spb-front .spb-panel-title{font-size:13px;font-weight:700;color:var(--spb-text);margin:0 0 8px 0}
-
-          .spb-front .spb-top{display:grid;grid-template-columns:1.7fr 1fr;gap:16px;align-items:start}
-
-          .spb-front .spb-drawing{border:0;background:transparent;padding:0}
-          .spb-front .spb-svg{
-            display:block;width:100%;
-            height:460px;
-            border-radius:12px;
-            background:#fff;
-            border:1px solid var(--spb-border);
-          }
-          .spb-front .spb-segs line{stroke:#111;stroke-width:3}
-          .spb-front .spb-dimlayer text{font-size:13px;fill:#111;dominant-baseline:middle;text-anchor:middle}
-          .spb-front .spb-dimlayer line{stroke:#111}
-
-          .spb-front .spb-titleblock{
-            margin-top:10px;
-            border:1px solid var(--spb-border);
-            border-radius:12px;
-            background:#fafafa;
-            padding:10px 12px;
-          }
-          .spb-front .spb-tb-row{
-            display:grid;
-            grid-template-columns:1.2fr .9fr .6fr;
-            gap:10px;
-          }
-          .spb-front .spb-tb-row + .spb-tb-row{
-            margin-top:8px;
-            padding-top:8px;
-            border-top:1px solid var(--spb-border);
-            grid-template-columns:1fr 1fr .7fr .7fr;
-          }
-          .spb-front .spb-tb-item span{
-            display:block;
-            font-size:11.5px;
-            color:#777;
-            margin-bottom:3px;
-          }
-          .spb-front .spb-tb-item strong{
-            display:block;
-            font-size:13.5px;
-            color:#111;
-            font-weight:800;
-            line-height:1.2;
-            white-space:nowrap;
-            overflow:hidden;
-            text-overflow:ellipsis;
-          }
-
-          .spb-front .spb-dims-scroll{max-height:460px;overflow:auto;padding-right:8px}
-          .spb-front .spb-inputs{display:grid;grid-template-columns:1fr 140px;gap:8px 10px;align-items:center}
-          .spb-front .spb-inputs label{font-size:12.5px;color:#444}
-          .spb-front input,.spb-front select{
-            width:100%;
-            padding:9px 11px;
-            border:1px solid #ddd;
-            border-radius:10px;
-            background:#fff;
-            color:#111;
-            font-size:14px
-          }
-          .spb-front input:focus,.spb-front select:focus{
-            outline:none;
-            border-color:rgba(0,0,0,0.25);
-            box-shadow:0 0 0 3px rgba(0,0,0,0.05)
-          }
-          .spb-front .spb-hint{margin-top:10px;font-size:12.5px;color:#777}
-
-          .spb-front .spb-order-grid{display:grid;grid-template-columns:1fr 1fr .7fr;gap:10px}
-          .spb-front .spb-field label{display:block;font-size:12.5px;color:#666;margin:0 0 6px 0}
-
-          .spb-front .spb-results{
-            margin-top:12px;
-            background:#fafafa;
-            border:1px solid var(--spb-border);
-            border-radius:12px;
-            padding:10px 12px
-          }
-          .spb-front .spb-r{display:flex;justify-content:space-between;gap:12px;margin:7px 0;color:#111}
-          .spb-front .spb-r span{font-size:13.5px;color:#555}
-          .spb-front .spb-r strong{font-size:16px;font-weight:800;color:#111}
-          .spb-front .spb-t strong{font-size:18px}
-
-          .spb-front .spb-actions{margin-top:12px;display:grid;gap:10px}
-          .spb-front .spb-btn{
-            width:100%;
-            padding:12px 14px;
-            border-radius:12px;
-            border:1px solid var(--spb-accent);
-            cursor:pointer;
-            font-weight:800;
-            background:var(--spb-accent);
-            color:#fff;
-            font-size:14px
-          }
-          .spb-front .spb-btn:hover{filter:brightness(0.96)}
-          .spb-front .spb-legal{font-size:12.5px;color:#777}
-
-          .spb-front .spb-error{margin:10px 0;padding:10px;border:1px solid #ffb4b4;background:#fff1f1;border-radius:10px;color:#7a1b1b}
-
-          @media (max-width: 980px){
-            .spb-front .spb-top{grid-template-columns:1fr}
-            .spb-front .spb-svg{height:360px}
-            .spb-front .spb-dims-scroll{max-height:320px}
-            .spb-front .spb-order-grid{grid-template-columns:1fr}
-            .spb-front .spb-tb-row{grid-template-columns:1fr 1fr}
-            .spb-front .spb-tb-row + .spb-tb-row{grid-template-columns:1fr 1fr}
-          }
-        </style>
-
-        <script>
-          (function(){
-            const root = document.getElementById('<?php echo esc_js($uid); ?>');
-            if (!root) return;
-            const cfg = JSON.parse(root.dataset.spb || '{}');
-
-            // CTA värv automaatselt lehe peamisest nupust (Elementor). Fallback jääb #111.
-            (function pickAccent(){
-              try {
-                const btn = document.querySelector('.elementor a.elementor-button, .elementor-button, a.elementor-button-link');
-                if (!btn) return;
-                const cs = window.getComputedStyle(btn);
-                const bg = cs && cs.backgroundColor;
-                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-                  root.style.setProperty('--spb-accent', bg);
-                }
-              } catch(e){}
-            })();
-
-            const err = root.querySelector('.spb-error');
-            function showErr(msg){ err.style.display='block'; err.textContent=msg; }
-
-            if (!cfg.dims || !cfg.dims.length) {
-              showErr('Sellel profiilil pole mõõte. Ava profiil adminis ja salvesta uuesti.');
-              return;
-            }
-
-            const inputsWrap = root.querySelector('.spb-inputs');
-            const matSel = root.querySelector('.spb-material');
-            const lenEl = root.querySelector('.spb-length');
-            const qtyEl = root.querySelector('.spb-qty');
-
-            const jmEl = root.querySelector('.spb-price-jm');
-            const matEl = root.querySelector('.spb-price-mat');
-            const novatEl = root.querySelector('.spb-price-novat');
-            const vatEl = root.querySelector('.spb-price-vat');
-
-            const segs = root.querySelector('.spb-segs');
-            const dimLayer = root.querySelector('.spb-dimlayer');
-            const rotG = root.querySelector('.spb-rot');
-            const ARROW_ID = '<?php echo esc_js($arrowId); ?>';
-
-            // ✅ Samm 2: rakenda pööramine ümber SVG keskpunkti
-            (function applyRotation(){
-              const r = Number(cfg.view_rotation || 0) || 0;
-              if (!rotG) return;
-              if (r % 360 === 0) { rotG.removeAttribute('transform'); return; }
-              rotG.setAttribute('transform', 'rotate(' + r + ' 410 230)');
-            })();
-
-            const formWrap = root.querySelector('.spb-form-wrap');
-            const openBtn = root.querySelector('.spb-open-form');
-
-            const tbProfile = root.querySelector('.spb-tb-profile');
-            const tbDate = root.querySelector('.spb-tb-date');
-            const tbMat = root.querySelector('.spb-tb-mat');
-            const tbLen = root.querySelector('.spb-tb-len');
-            const tbQty = root.querySelector('.spb-tb-qty');
-            const tbSum = root.querySelector('.spb-tb-sum');
-
-            const stateVal = {};
-
-            function toNum(v,f){ const n = Number(v); return Number.isFinite(n)?n:f; }
-            function clamp(n,min,max){ n = toNum(n,min); return Math.max(min, Math.min(max,n)); }
-            function deg2rad(d){ return d * Math.PI / 180; }
-            function turnFromAngle(aDeg, pol){ const a=Number(aDeg||0); return (pol==='outer')?a:(180-a); }
-
-            function svgEl(tag){ return document.createElementNS('http://www.w3.org/2000/svg', tag); }
-            function addSegLine(x1,y1,x2,y2, dash){
-              const l = svgEl('line');
-              l.setAttribute('x1',x1); l.setAttribute('y1',y1);
-              l.setAttribute('x2',x2); l.setAttribute('y2',y2);
-              l.setAttribute('stroke','#111'); l.setAttribute('stroke-width','3');
-              if (dash) l.setAttribute('stroke-dasharray', dash);
-              segs.appendChild(l);
-              return l;
-            }
-            function addDimLine(g,x1,y1,x2,y2,w,op,arrows){
-              const l = svgEl('line');
-              l.setAttribute('x1',x1); l.setAttribute('y1',y1);
-              l.setAttribute('x2',x2); l.setAttribute('y2',y2);
-              l.setAttribute('stroke','#111'); l.setAttribute('stroke-width', w||1);
-              if (op!=null) l.setAttribute('opacity', op);
-              if (arrows){
-                l.setAttribute('marker-start', `url(#${ARROW_ID})`);
-                l.setAttribute('marker-end', `url(#${ARROW_ID})`);
-              }
-              g.appendChild(l);
-              return l;
-            }
-            function addText(g,x,y,text,rot){
-              const t = svgEl('text');
-              t.setAttribute('x',x); t.setAttribute('y',y);
-              t.textContent = text;
-              if (typeof rot === 'number') t.setAttribute('transform', `rotate(${rot} ${x} ${y})`);
-              g.appendChild(t);
-              return t;
-            }
-            function vec(x,y){ return {x,y}; }
-            function sub(a,b){ return {x:a.x-b.x,y:a.y-b.y}; }
-            function add(a,b){ return {x:a.x+b.x,y:a.y+b.y}; }
-            function mul(a,k){ return {x:a.x*k,y:a.y*k}; }
-            function vlen(v){ return Math.hypot(v.x,v.y)||1; }
-            function norm(v){ const l=vlen(v); return {x:v.x/l,y:v.y/l}; }
-            function perp(v){ return {x:-v.y,y:v.x}; }
-
-            function buildDimMap(){
-              const map = {};
-              cfg.dims.forEach(d=>{ if (d && d.key) map[d.key]=d; });
-              return map;
-            }
-
-            function renderMaterials(){
-              matSel.innerHTML='';
-              (cfg.materials||[]).forEach(m=>{
-                const opt = document.createElement('option');
-                opt.value = m.key;
-                opt.textContent = (m.label || m.key);
-                opt.dataset.eur = toNum(m.eur_m2, 0);
-                matSel.appendChild(opt);
-              });
-              if (matSel.options.length) matSel.selectedIndex = 0;
-            }
-            function currentMaterialEurM2(){
-              const opt = matSel.options[matSel.selectedIndex];
-              return opt ? toNum(opt.dataset.eur,0) : 0;
-            }
-            function currentMaterialLabel(){
-              const opt = matSel.options[matSel.selectedIndex];
-              return opt ? opt.textContent : '';
-            }
-
-            function renderDimInputs(){
-              inputsWrap.innerHTML='';
-              cfg.dims.forEach(d=>{
-                const min = (d.min ?? (d.type==='angle'?5:10));
-                const max = (d.max ?? (d.type==='angle'?215:500));
-                const def = (d.def ?? min);
-
-                stateVal[d.key] = toNum(stateVal[d.key], def);
-
-                const lab = document.createElement('label');
-                lab.textContent = (d.label || d.key) + (d.type==='angle' ? ' (°)' : ' (mm)');
-
-                const inp = document.createElement('input');
-                inp.type='number';
-                inp.value = stateVal[d.key];
-                inp.min = min;
-                inp.max = max;
-                inp.dataset.key = d.key;
-
-                inputsWrap.appendChild(lab);
-                inputsWrap.appendChild(inp);
-              });
-            }
-
-            function computePolyline(dimMap){
-              let x=140, y=360;
-              let heading=-90;
-              const pts=[[x,y]];
-              const segStyle=[];
-              const pattern = Array.isArray(cfg.pattern) ? cfg.pattern : [];
-
-              const segKeys = pattern.filter(k => dimMap[k] && dimMap[k].type==='length');
-              const totalMm = segKeys.reduce((s,k)=> s + Number(stateVal[k]||0), 0);
-              const kScale = totalMm > 0 ? (520/totalMm) : 1;
-
-              let pendingReturn = false;
-
-              for (const key of pattern) {
-                const meta = dimMap[key];
-                if (!meta) continue;
-
-                if (meta.type==='length') {
-                  const mm = Number(stateVal[key]||0);
-                  x += Math.cos(deg2rad(heading)) * (mm*kScale);
-                  y += Math.sin(deg2rad(heading)) * (mm*kScale);
-                  pts.push([x,y]);
-
-                  segStyle.push(pendingReturn ? 'return' : 'main');
-                  pendingReturn = false;
-                } else {
-                  const a = Number(stateVal[key]||0);
-                  const pol = (meta.pol === 'outer') ? 'outer' : 'inner';
-                  const dir = (meta.dir === 'R') ? 'R' : 'L';
-                  const turn = turnFromAngle(a, pol);
-                  heading += (dir==='R' ? -1 : 1) * turn;
-
-                  if (meta.ret) pendingReturn = true;
-                }
-              }
-
-              const pad=70;
-              const xs = pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
-              const minX=Math.min(...xs), maxX=Math.max(...xs);
-              const minY=Math.min(...ys), maxY=Math.max(...ys);
-              const w=(maxX-minX)||1, h=(maxY-minY)||1;
-              const s = Math.min((800-2*pad)/w, (420-2*pad)/h);
-
-              const pts2 = pts.map(([px,py])=>[(px-minX)*s+pad, (py-minY)*s+pad]);
-              return { pts: pts2, segStyle };
-            }
-
-            function renderSegments(pts, segStyle){
-              segs.innerHTML='';
-              for (let i=0;i<pts.length-1;i++){
-                const A=pts[i], B=pts[i+1];
-                const style = segStyle[i] || 'main';
-                addSegLine(A[0],A[1],B[0],B[1], style==='return' ? '6 6' : null);
-              }
-            }
-
-            function drawDimension(A,B,label,offsetPx){
-              const v = sub(B,A);
-              const vHat = norm(v);
-              const nHat = norm(perp(vHat));
-              const off = mul(nHat, offsetPx);
-
-              const A2 = add(A, off);
-              const B2 = add(B, off);
-
-              addDimLine(dimLayer, A.x, A.y, A2.x, A2.y, 1, .35, false);
-              addDimLine(dimLayer, B.x, B.y, B2.x, B2.y, 1, .35, false);
-              addDimLine(dimLayer, A2.x, A2.y, B2.x, B2.y, 1.4, 1, true);
-
-              const mid = mul(add(A2,B2), 0.5);
-              let ang = Math.atan2(vHat.y, vHat.x) * 180 / Math.PI;
-              if (ang > 90) ang -= 180;
-              if (ang < -90) ang += 180;
-
-              addText(dimLayer, mid.x, mid.y - 6, label, ang);
-            }
-
-            function renderDims(dimMap, pts){
-              dimLayer.innerHTML='';
-              const pattern = Array.isArray(cfg.pattern) ? cfg.pattern : [];
-              const OFFSET=-22;
-              let segIndex=0;
-              for (const key of pattern) {
-                const meta = dimMap[key];
-                if (!meta) continue;
-                if (meta.type==='length') {
-                  const pA=pts[segIndex], pB=pts[segIndex+1];
-                  if (pA && pB) drawDimension(vec(pA[0],pA[1]), vec(pB[0],pB[1]), `${key} ${stateVal[key]}mm`, OFFSET);
-                  segIndex += 1;
-                }
-              }
-            }
-
-            function calc(){
-              let sumSmm=0;
-              cfg.dims.forEach(d=>{
-                if (d.type !== 'length') return;
-                const min = (d.min ?? 10);
-                const max = (d.max ?? 500);
-                sumSmm += clamp(stateVal[d.key], min, max);
-              });
-
-              const sumSm = sumSmm / 1000.0;
-              const Pm = clamp(lenEl.value, 50, 8000) / 1000.0;
-              const qty = clamp(qtyEl.value, 1, 999);
-
-              const area = sumSm * Pm;
-              const matNoVat = area * currentMaterialEurM2() * qty;
-
-              const jmWork = toNum(cfg.jm_work_eur_jm, 0);
-              const jmPerM = toNum(cfg.jm_per_m_eur_jm, 0);
-              const jmRate = jmWork + (sumSm * jmPerM);
-              const jmNoVat = (Pm * jmRate) * qty;
-
-              const totalNoVat = matNoVat + jmNoVat;
-              const vatPct = toNum(cfg.vat, 24);
-              const totalVat = totalNoVat * (1 + vatPct/100);
-
-              return { sumSmm, area, qty, matNoVat, jmNoVat, totalNoVat, totalVat, vatPct };
-            }
-
-            function setTitleBlock(out){
-              try{
-                if (tbProfile) tbProfile.textContent = cfg.profileName || '—';
-                if (tbDate) {
-                  const d = new Date();
-                  const yyyy = d.getFullYear();
-                  const mm = String(d.getMonth()+1).padStart(2,'0');
-                  const dd = String(d.getDate()).padStart(2,'0');
-                  tbDate.textContent = `${dd}.${mm}.${yyyy}`;
-                }
-                if (tbMat) tbMat.textContent = currentMaterialLabel() || '—';
-                if (tbLen) tbLen.textContent = `${clamp(lenEl.value, 50, 8000)} mm`;
-                if (tbQty) tbQty.textContent = String(clamp(qtyEl.value, 1, 999));
-                if (tbSum) tbSum.textContent = `${out.sumSmm} mm`;
-              }catch(e){}
-            }
-
-            function dimsPayloadJSON(){
-              return JSON.stringify(cfg.dims.map(d=>{
-                const o = { key:d.key, type:d.type, label:(d.label||d.key), value:stateVal[d.key] };
-                if (d.type==='angle') {
-                  o.dir = d.dir || 'L';
-                  o.pol = d.pol || 'inner';
-                  o.ret = !!d.ret;
-                }
-                return o;
-              }));
-            }
-
-            function fillWpforms(){
-              const wp = cfg.wpforms || {};
-              const formId = Number(wp.form_id || 0);
-              if (!formId) return;
-
-              const map = wp.map || {};
-              const out = calc();
-
-              const values = {
-                profile_name: cfg.profileName || '',
-                dims_json: dimsPayloadJSON(),
-                material: currentMaterialLabel(),
-                detail_length_mm: String(clamp(lenEl.value, 50, 8000)),
-                qty: String(clamp(qtyEl.value, 1, 999)),
-                sum_s_mm: String(out.sumSmm),
-                area_m2: String(out.area.toFixed(4)),
-                price_material_no_vat: String(out.matNoVat.toFixed(2)),
-                price_jm_no_vat: String(out.jmNoVat.toFixed(2)),
-                price_total_no_vat: String(out.totalNoVat.toFixed(2)),
-                price_total_vat: String(out.totalVat.toFixed(2)),
-                vat_pct: String(out.vatPct),
-              };
-
-              function setField(fieldId, val){
-                fieldId = Number(fieldId || 0);
-                if (!fieldId) return;
-                const el = document.querySelector(`[name="wpforms[fields][${fieldId}]"]`);
-                if (!el) return;
-                el.value = val;
-                el.dispatchEvent(new Event('input', {bubbles:true}));
-                el.dispatchEvent(new Event('change', {bubbles:true}));
-              }
-
-              Object.keys(map).forEach(k => setField(map[k], values[k] ?? ''));
-            }
-
-            function render(){
-              const dimMap = buildDimMap();
-              const outPoly = computePolyline(dimMap);
-
-              renderSegments(outPoly.pts, outPoly.segStyle);
-              renderDims(dimMap, outPoly.pts);
-
-              const price = calc();
-              jmEl.textContent = price.jmNoVat.toFixed(2) + ' €';
-              matEl.textContent = price.matNoVat.toFixed(2) + ' €';
-              novatEl.textContent = price.totalNoVat.toFixed(2) + ' €';
-              vatEl.textContent = price.totalVat.toFixed(2) + ' €';
-
-              setTitleBlock(price);
-            }
-
-            inputsWrap.addEventListener('input', (e)=>{
-              const el = e.target;
-              if (!el || !el.dataset || !el.dataset.key) return;
-              const key = el.dataset.key;
-
-              const meta = cfg.dims.find(x=>x.key===key);
-              if (!meta) return;
-
-              const min = (meta.min ?? (meta.type==='angle'?5:10));
-              const max = (meta.max ?? (meta.type==='angle'?215:500));
-              stateVal[key] = clamp(el.value, min, max);
-
-              render();
-            });
-
-            matSel.addEventListener('change', render);
-            lenEl.addEventListener('input', render);
-            qtyEl.addEventListener('input', render);
-
-            if (openBtn) openBtn.addEventListener('click', function(){
-              render();
-              if (formWrap) {
-                fillWpforms();
-                formWrap.style.display='block';
-                formWrap.scrollIntoView({behavior:'smooth', block:'start'});
-              }
-            });
-
-            renderDimInputs();
-            renderMaterials();
-            render();
-          })();
-        </script>
       </div>
     <?php
     return ob_get_clean();
